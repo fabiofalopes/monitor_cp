@@ -72,31 +72,31 @@ def create():
             station_names = sorted(list(station_cache.keys()))
             ui.select(
                 options=station_names, with_input=True, label='Search for a station...', on_change=handle_selection
-            ).classes('w-64 sm:w-72 md:w-96 p-4').props('color=white dense outlined')
-
-        # --- Filter Bar ---
-        with ui.row().classes('w-full px-4 gap-4 items-center justify-center'):
-            service_filter = ui.select(
-                options=[], label="Filter by service", multiple=True, clearable=True
-            ).classes('w-64').bind_value(app.storage.user, 'selected_services')
-            
-            train_number_filter = ui.input(
-                label="Filter by train number",
-            ).classes('w-48').props('clearable').bind_value(app.storage.user, 'search_train_number')
-
-        # --- Scroll-to-Top FAB ---
-        ui.button(icon='keyboard_arrow_up', on_click=lambda: ui.run_javascript("window.scrollTo({top: 0, behavior: 'smooth'})")) \
-            .props('fab round color=accent') \
-            .classes('fixed bottom-8 right-8 z-30')
+            ).classes('w-64 sm:w-72 md:w-96 p-4').props('color=white dense outlined icon=search')
 
         # --- Main Content ---
-        with ui.column().classes('w-full p-4 items-center'):
-            ui.label().classes('text-3xl font-bold mb-4').bind_text_from(
-                app.storage.user, 'selected_station_name', lambda name: name or DEFAULT_STATION_NAME
-            )
-            live_board_container = ui.grid(
-                columns=1,
-            ).classes('w-full gap-4 sm:grid-cols-2 lg:grid-cols-3')
+        with ui.column().classes('w-full p-4 items-stretch gap-4'):
+            # --- Control Deck ---
+            with ui.card().classes('w-full'):
+                with ui.card_section():
+                    ui.label().classes('text-2xl font-bold').bind_text_from(
+                        app.storage.user, 'selected_station_name', lambda name: name or DEFAULT_STATION_NAME
+                    )
+                
+                ui.separator()
+
+                with ui.card_section().classes('w-full'):
+                    with ui.row().classes('w-full items-center gap-4'):
+                        service_filter = ui.select(
+                            options=[], label="Filter by service", multiple=True, clearable=True
+                        ).classes('flex-grow').bind_value(app.storage.user, 'selected_services')
+                        
+                        train_number_filter = ui.input(
+                            label="Filter by train number",
+                        ).classes('flex-grow').props('clearable').bind_value(app.storage.user, 'search_train_number')
+
+            # --- Live Board ---
+            live_board_container = ui.column().classes('w-full gap-2')
 
         def update_dashboard():
             """Fetches train data and dynamically builds the platform-centric live board."""
@@ -123,97 +123,77 @@ def create():
 
             if not filtered_trains:
                 with live_board_container:
-                    ui.label("No matching train data found.").classes('text-center text-gray-500')
+                    ui.label("No matching train data found.").classes('text-center text-gray-500 p-4')
                 return
 
-            platforms = sorted(list(set(t['platform'] for t in filtered_trains if t.get('platform'))))
-            trains_by_platform = {p: [t for t in filtered_trains if t.get('platform') == p] for p in platforms}
+            sorted_trains = sorted(filtered_trains, key=lambda t: t.get('etd') or t.get('eta') or t.get('departureTime') or t.get('arrivalTime') or '99:99')
 
             with live_board_container:
-                # --- Sticky Platform Navigation ---
-                with ui.row().classes(
-                    'w-full sticky top-0 bg-white/90 dark:bg-slate-900/90 '
-                    'py-2 px-4 z-20 items-center shadow-md backdrop-blur-sm rounded-lg mb-4'
-                ):
-                    ui.label("Go to platform:").classes('flex-shrink-0 text-sm sm:text-base text-gray-600 dark:text-gray-300 font-medium mr-4')
-                    
-                    with ui.row().classes('flex-nowrap overflow-x-auto w-full gap-2'):
-                        for platform in platforms:
-                            js_command = f"document.getElementById('platform-{platform}').scrollIntoView({{ behavior: 'smooth' }});"
-                            ui.button(platform, on_click=lambda cmd=js_command: ui.run_javascript(cmd)).props('flat dense')
+                with ui.list().classes('w-full'):
+                    for train in sorted_trains:
+                        with ui.item().classes('w-full p-0'):
+                            with ui.row().classes('w-full items-center p-4 gap-x-4 gap-y-2 flex-wrap border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors'):
+                                # Part 1: Service & Train Info
+                                with ui.row(wrap=False).classes('items-center gap-4 w-52 min-w-[200px]'):
+                                    service_code = train['trainService']['code']
+                                    service_name = train['trainService']['designation']
+                                    with ui.avatar(color='primary', text_color='white', size='lg', square=True, rounded=True):
+                                        ui.label(service_code).classes('text-lg font-bold')
+                                    
+                                    with ui.column().classes('gap-0'):
+                                        ui.label(service_name).classes('font-bold text-base leading-tight')
+                                        ui.label(f"#{train['trainNumber']}").classes('text-sm text-gray-500 dark:text-gray-400 leading-tight')
 
-                # --- Platform Sections ---
-                with ui.grid().classes('w-full grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4'):
-                    for platform in platforms:
-                        with ui.card().classes('w-full').props(f'flat bordered id=platform-{platform}'):
-                            with ui.card_section().classes('bg-slate-100 dark:bg-slate-800'):
-                                ui.label(f"Platform {platform}").classes('text-lg font-bold')
-                            
-                            with ui.card_section().classes('p-0'):
-                                for train in sorted(trains_by_platform[platform], key=lambda t: t.get('etd') or t.get('eta') or '99:99'):
-                                    with ui.row().classes('w-full items-center justify-between p-3 gap-4 border-b dark:border-gray-700'):
-                                        # Part 1: Service Info
-                                        with ui.row(wrap=False).classes('items-center gap-3 w-48'):
-                                            service_code = train['trainService']['code']
-                                            service_name = train['trainService']['designation']
-                                            with ui.avatar(color='primary', text_color='white', size='md', square=True, rounded=True):
-                                                ui.label(service_code).classes('text-sm font-bold')
-                                            
-                                            with ui.column().classes('gap-0'):
-                                                ui.label(service_name).classes('font-semibold text-sm leading-tight')
-                                                ui.label(f"#{train['trainNumber']}").classes('text-xs text-gray-500 dark:text-gray-400 leading-tight')
+                                # Part 2: Platform
+                                with ui.row().classes('w-20 flex justify-center'):
+                                    if train.get('platform'):
+                                        with ui.card().classes('p-2 bg-sky-100 dark:bg-sky-900 rounded-lg'):
+                                            ui.label(f"P {train['platform']}").classes('font-bold text-lg text-sky-800 dark:text-sky-200')
 
-                                        # Part 2: Time, Delay, Occupancy (Now in the middle)
-                                        with ui.row(wrap=False).classes('items-center gap-4'):
-                                            with ui.column().classes('items-end gap-0'):
-                                                # Prioritize estimated times, but fall back to scheduled times for display
-                                                display_time = train.get('etd') or train.get('eta') or train.get('departureTime') or train.get('arrivalTime')
-                                                
-                                                scheduled_departure = train.get('departureTime')
-                                                scheduled_arrival = train.get('arrivalTime')
-                                                delay = train.get('delay') or 0
+                                # Part 3: Time
+                                with ui.column().classes('items-end gap-0 w-32 min-w-[120px]'):
+                                    display_time = train.get('etd') or train.get('eta') or train.get('departureTime') or train.get('arrivalTime')
+                                    scheduled_departure = train.get('departureTime')
+                                    scheduled_arrival = train.get('arrivalTime')
+                                    delay = train.get('delay') or 0
 
-                                                if display_time:
-                                                    ui.label(display_time).classes('font-bold text-xl')
+                                    if display_time:
+                                        ui.label(display_time).classes('font-bold text-2xl')
 
-                                                # Determine what to show as the secondary, smaller time
-                                                secondary_display = None
-                                                
-                                                # If delayed, show the original scheduled time with a strikethrough
-                                                if delay > 0:
-                                                    original_time = scheduled_departure or scheduled_arrival
-                                                    secondary_display = original_time
-                                                
-                                                # If it's a pass-through train, show the arrival/departure range
-                                                elif scheduled_departure and scheduled_arrival and scheduled_departure != scheduled_arrival:
-                                                    secondary_display = f"{scheduled_arrival} → {scheduled_departure}"
+                                    secondary_display = None
+                                    if delay > 0:
+                                        secondary_display = scheduled_departure or scheduled_arrival
+                                    elif scheduled_departure and scheduled_arrival and scheduled_departure != scheduled_arrival:
+                                        secondary_display = f"{scheduled_arrival} → {scheduled_departure}"
+                                    
+                                    if secondary_display:
+                                        classes = 'text-sm text-gray-500'
+                                        if delay > 0:
+                                            classes += ' line-through'
+                                        ui.label(secondary_display).classes(classes)
+                                
+                                # Part 4: Status
+                                with ui.column().classes('items-start w-24 min-w-[80px]'):
+                                    if delay > 0:
+                                        delay_color = 'red-600' if delay > 5 else 'orange-500'
+                                        ui.label(f"+{delay} min").classes(f"text-{delay_color} font-bold text-base")
+                                    else:
+                                        ui.label('On Time').classes('text-green-600 font-bold text-base')
 
-                                                if secondary_display:
-                                                    classes = 'text-sm text-gray-500'
-                                                    if delay > 0:
-                                                        classes += ' line-through'
-                                                    ui.label(secondary_display).classes(classes)
-
-                                            with ui.column().classes('items-center w-20'):
-                                                if delay > 0:
-                                                    delay_color = 'red-600' if delay > 5 else 'orange-500'
-                                                    ui.label(f"+{delay} min").classes(f"text-{delay_color} font-bold text-sm")
-                                                else:
-                                                    ui.label('On Time').classes('text-green-600 font-bold text-sm')
-
-                                                occupancy = train.get('occupancy')
-                                                if occupancy:
-                                                    icon_map = {1: 'signal_cellular_1_bar', 2: 'signal_cellular_2_bar', 3: 'signal_cellular_3_bar'}
-                                                    ui.icon(icon_map.get(occupancy, 'signal_cellular_off'), color='gray-500').classes('mt-1')
-
-                                        # Part 3: Direction (Now on the right)
-                                        with ui.column().classes('flex-grow items-end justify-center min-w-0'): # min-w-0 helps with flexbox truncation
-                                            origin = train['trainOrigin']['designation']
-                                            destination = train['trainDestination']['designation']
-                                            with ui.row(wrap=False).classes('items-center justify-end w-full'):
-                                                ui.label(origin).classes('text-sm text-gray-500 truncate')
-                                                ui.icon('east', size='sm').classes('mx-2 text-gray-400')
-                                                ui.label(destination).classes('font-bold text-md truncate')
+                                # Part 5: Route
+                                with ui.row(wrap=False).classes('items-center justify-end flex-grow min-w-0 gap-4 ml-auto'):
+                                    with ui.column().classes('items-end gap-1 min-w-0'):
+                                        origin = train['trainOrigin']['designation']
+                                        destination = train['trainDestination']['designation']
+                                        with ui.row(wrap=False).classes('items-center justify-end w-full'):
+                                            ui.label(origin).classes('text-md text-gray-500 dark:text-gray-400 truncate')
+                                            ui.icon('east', size='md').classes('mx-2 text-gray-400')
+                                            ui.label(destination).classes('font-bold text-lg truncate')
+        
+        # --- Scroll-to-Top FAB ---
+        ui.button(icon='keyboard_arrow_up', on_click=lambda: ui.run_javascript("window.scrollTo({top: 0, behavior: 'smooth'})")) \
+            .props('fab round color=accent') \
+            .classes('fixed bottom-8 right-8 z-30')
 
         # When filters change, update the dashboard
         service_filter.on('update:model-value', update_dashboard)
