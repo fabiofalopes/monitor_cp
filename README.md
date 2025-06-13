@@ -29,14 +29,3 @@ Painel para consulta de comboios da CP em tempo real. Feito com `Python` e `Nice
     ```
 
 A aplicação fica disponível em `http://localhost:8080`.
-
-## Deployment
-
-This application is automatically deployed to GitHub Pages whenever changes are pushed to the `main` branch.
-
-The deployment process is handled by a GitHub Actions workflow defined in `.github/workflows/deploy.yml`. The workflow performs the following steps:
-
-1.  **Build**: It installs the Python dependencies and runs `python deploy.py` to export the NiceGUI app into a static website in the `/static` directory.
-2.  **Deploy**: The contents of the `/static` directory are then deployed to the `gh-pages` environment.
-
-After a successful deployment, the site will be available at the URL provided in your repository's "Pages" settings.
