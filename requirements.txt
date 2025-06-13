@@ -1,0 +1,6 @@
+nicegui
+requests
+python-dotenv
+thefuzz[speedup] 
+
+opencv-python>=4.0
