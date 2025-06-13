@@ -48,6 +48,10 @@ def get_trains_at_station(station_id: str) -> List[Dict[str, Any]]:
         print(f"Error fetching trains for station {station_id}: {e}")
         return []
 
+def capitalize_words(text: str) -> str:
+    """Capitaliza cada palavra de uma string, tornando-a mais legível."""
+    return ' '.join(word.capitalize() for word in text.split()) if text else ''
+
 def create():
     def handle_station_selection(station_name: str, station_id: str):
         """Callback function when a station is selected."""
@@ -69,9 +73,17 @@ def create():
                     station_id = station_cache[e.value]
                     handle_station_selection(e.value, station_id)
 
+            # Capitalizar nomes das estações para a lista de seleção
             station_names = sorted(list(station_cache.keys()))
+            station_options = [capitalize_words(name) for name in station_names]
+            # Mapear nome capitalizado para o nome original para seleção correta
+            station_name_map = {capitalize_words(name): name for name in station_names}
+            def handle_selection_cap(e):
+                if e.value and e.value in station_name_map:
+                    station_id = station_cache[station_name_map[e.value]]
+                    handle_station_selection(station_name_map[e.value], station_id)
             ui.select(
-                options=station_names, with_input=True, label='Search for a station...', on_change=handle_selection
+                options=station_options, with_input=True, label='Search for a station...', on_change=handle_selection_cap
             ).classes('w-64 sm:w-72 md:w-96 p-4').props('color=white dense outlined icon=search')
 
         # --- Main Content ---
@@ -80,7 +92,7 @@ def create():
             with ui.card().classes('w-full'):
                 with ui.card_section():
                     ui.label().classes('text-2xl font-bold').bind_text_from(
-                        app.storage.user, 'selected_station_name', lambda name: name or DEFAULT_STATION_NAME
+                        app.storage.user, 'selected_station_name', lambda name: capitalize_words(name or DEFAULT_STATION_NAME)
                     )
                 
                 ui.separator()
@@ -136,7 +148,7 @@ def create():
                                 # Part 1: Service & Train Info
                                 with ui.row(wrap=False).classes('items-center gap-4 w-52 min-w-[200px]'):
                                     service_code = train['trainService']['code']
-                                    service_name = train['trainService']['designation']
+                                    service_name = capitalize_words(train['trainService']['designation'])
                                     with ui.avatar(color='primary', text_color='white', size='lg', square=True, rounded=True):
                                         ui.label(service_code).classes('text-lg font-bold')
                                     
@@ -183,8 +195,8 @@ def create():
                                 # Part 5: Route
                                 with ui.row(wrap=False).classes('items-center justify-end flex-grow min-w-0 gap-4 ml-auto'):
                                     with ui.column().classes('items-end gap-1 min-w-0'):
-                                        origin = train['trainOrigin']['designation']
-                                        destination = train['trainDestination']['designation']
+                                        origin = capitalize_words(train['trainOrigin']['designation'])
+                                        destination = capitalize_words(train['trainDestination']['designation'])
                                         with ui.row(wrap=False).classes('items-center justify-end w-full'):
                                             ui.label(origin).classes('text-md text-gray-500 dark:text-gray-400 truncate')
                                             ui.icon('east', size='md').classes('mx-2 text-gray-400')
