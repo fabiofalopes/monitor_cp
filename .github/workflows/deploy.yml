@@ -28,12 +28,12 @@ jobs:
           pip install -r requirements.txt
       
       - name: Build static files
-        run: python deploy.py
+        run: python -m nicegui export
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./_pyscript
+          path: ./_export
 
   deploy:
     needs: build
