@@ -11,6 +11,11 @@ import requests
 from dotenv import load_dotenv
 from nicegui import app, ui
 from thefuzz import process
+from fastapi import FastAPI
+from starlette.responses import Response
+
+from components.map import Map
+from services.train_data import train_service
 
 # Load environment variables from .env file
 load_dotenv()
@@ -22,6 +27,7 @@ TRAINS_URL = f"{API_BASE_URL}/station/trains"
 
 DEFAULT_STATION_NAME = "Lisboa Oriente"
 DEFAULT_STATION_ID = os.getenv("DEFAULT_STATION_ID", "94-31039")
+MAPBOX_TOKEN = os.getenv("MAPBOX_TOKEN")
 
 # --- State Management ---
 station_cache: Dict[str, str] = {}
@@ -59,33 +65,43 @@ def create():
         app.storage.user['selected_station_id'] = station_id
         ui.navigate.to('/')
 
+    def create_header(show_search: bool = True):
+        """Creates the header for all pages."""
+        with ui.header(elevated=True).classes('items-center justify-between p-4'):
+            with ui.row().classes('w-full items-center justify-between'):
+                with ui.row().classes('items-center'):
+                    ui.label('Monitor CP').classes('text-lg sm:text-xl font-bold')
+                    ui.link('Station View', '/').classes('text-white mx-4')
+                    
+                    # Show current station in map link if one is selected
+                    selected_station = app.storage.user.get('selected_station_name')
+                    if selected_station:
+                        map_link_text = f'Map View ({capitalize_words(selected_station)})'
+                    else:
+                        map_link_text = 'Map View'
+                    ui.link(map_link_text, '/map').classes('text-white mx-4')
+
+                if show_search:
+                    # Capitalizar nomes das estações para a lista de seleção
+                    station_names = sorted(list(station_cache.keys()))
+                    station_options = [capitalize_words(name) for name in station_names]
+                    # Mapear nome capitalizado para o nome original para seleção correta
+                    station_name_map = {capitalize_words(name): name for name in station_names}
+
+                    def handle_selection_cap(e):
+                        if e.value and e.value in station_name_map:
+                            station_id = station_cache[station_name_map[e.value]]
+                            handle_station_selection(station_name_map[e.value], station_id)
+
+                    ui.select(
+                        options=station_options, with_input=True, label='Search for a station...', on_change=handle_selection_cap
+                    ).classes('w-64 sm:w-72 md:w-96').props('color=white dense outlined icon=search')
+
     @ui.page('/')
     def main_page():
         """Main UI page for the application."""
-        selected_station_name = app.storage.user.get('selected_station_name', DEFAULT_STATION_NAME)
+        create_header()
         
-        # --- Header ---
-        with ui.header(elevated=True).classes('items-center justify-between'):
-            ui.label('Monitor CP').classes('text-lg sm:text-xl font-bold p-4')
-
-            def handle_selection(e):
-                if e.value and e.value in station_cache:
-                    station_id = station_cache[e.value]
-                    handle_station_selection(e.value, station_id)
-
-            # Capitalizar nomes das estações para a lista de seleção
-            station_names = sorted(list(station_cache.keys()))
-            station_options = [capitalize_words(name) for name in station_names]
-            # Mapear nome capitalizado para o nome original para seleção correta
-            station_name_map = {capitalize_words(name): name for name in station_names}
-            def handle_selection_cap(e):
-                if e.value and e.value in station_name_map:
-                    station_id = station_cache[station_name_map[e.value]]
-                    handle_station_selection(station_name_map[e.value], station_id)
-            ui.select(
-                options=station_options, with_input=True, label='Search for a station...', on_change=handle_selection_cap
-            ).classes('w-64 sm:w-72 md:w-96 p-4').props('color=white dense outlined icon=search')
-
         # --- Main Content ---
         with ui.column().classes('w-full p-4 items-stretch gap-4'):
             # --- Control Deck ---
@@ -214,6 +230,158 @@ def create():
         update_dashboard()
         ui.timer(30, update_dashboard)
 
+    @ui.page('/map')
+    def map_page():
+        """Page to display the live train map."""
+        create_header(show_search=False)
+
+        if not MAPBOX_TOKEN:
+            with ui.row().classes('w-full h-screen items-center justify-center'):
+                ui.label('Mapbox token not found. Please set it in your .env file.').classes('text-red-500')
+            return
+
+        # Create a full-screen map container that accounts for the header
+        # Use CSS calc to subtract header height from viewport height
+        ui.add_head_html('''
+        <style>
+        .map-page-container {
+            position: fixed;
+            top: 64px; /* Header height */
+            left: 0;
+            right: 0;
+            bottom: 0;
+            width: 100vw;
+            height: calc(100vh - 64px);
+        }
+        </style>
+        ''')
+        
+        with ui.element('div').classes('map-page-container'):
+            map_view = Map(MAPBOX_TOKEN).classes('w-full h-full')
+
+        # Center map around selected station if available
+        def center_map_on_selected_station():
+            """Center the map on the currently selected station."""
+            selected_station_id = app.storage.user.get('selected_station_id')
+            selected_station_name = app.storage.user.get('selected_station_name')
+            
+            coords = None
+            if selected_station_id:
+                # Try to get coordinates by station ID first
+                coords = train_service.get_station_coordinates_by_id(selected_station_id)
+                if not coords and selected_station_name:
+                    # Fallback to station name lookup
+                    coords = train_service.get_station_coordinates_by_name(selected_station_name)
+            
+            if coords:
+                # Center map on the station with appropriate zoom level
+                map_view.set_location(coords['lng'], coords['lat'], 12)
+                print(f"Centered map on {selected_station_name or selected_station_id} at {coords['lng']}, {coords['lat']}")
+            else:
+                # Fallback to center on Portugal if no station selected or coordinates not found
+                if selected_station_id or selected_station_name:
+                    print(f"Could not find coordinates for station: {selected_station_name or selected_station_id}, using default Portugal view")
+                else:
+                    print("No station selected, showing default Portugal view")
+                # Center on Portugal with a good overview zoom
+                map_view.set_location(-8.61099, 39.69999, 7)
+
+        # Add route request handler
+        def handle_route_request(e):
+            """Handle train route visualization requests from the map."""
+            train_id = e.args[0] if e.args else None
+            if train_id:
+                route_coords = train_service.get_train_route(train_id)
+                if route_coords:
+                    map_view.draw_route(route_coords)
+                
+        # Connect the route request handler to the map
+        map_view.on('request_train_route', handle_route_request)
+
+        def update_map():
+            """Fetches the latest train data and updates the map markers."""
+            # Get all trains data
+            trains = train_service.get_all_trains()
+            trains_list = []
+            
+            for train in trains.values():
+                trains_list.append({
+                    'trainId': train['trainId'],
+                    'trainNumber': train['trainNumber'],
+                    'serviceCode': train['serviceCode'],
+                    'serviceName': train['serviceName'],
+                    'lng': train['lng'],
+                    'lat': train['lat'],
+                    'delay': train['delay'],
+                    'origin': train['origin'],
+                    'destination': train['destination'],
+                    'status': train['status'],
+                    'platform': train.get('platform'),
+                    'occupancy': train.get('occupancy'),
+                    'eta': train.get('eta'),
+                    'etd': train.get('etd'),
+                    'arrivalTime': train.get('arrivalTime'),
+                    'departureTime': train.get('departureTime'),
+                    'trainStops': train.get('trainStops', [])
+                })
+            
+            # Update trains on map efficiently
+            map_view.update_trains(trains_list)
+            
+            # Update all stations (including discovered ones from train data)
+            if not hasattr(update_map, 'stations_updated') or len(trains_list) > 0:
+                all_stations = train_service.get_all_stations()
+                if all_stations:  # Only add if we have station data
+                    if hasattr(update_map, 'stations_updated'):
+                        # Update existing stations
+                        map_view.update_all_stations(all_stations)
+                    else:
+                        # First time loading
+                        map_view.add_stations_batch(all_stations)
+                    update_map.stations_updated = True
+
+        # Add initial stations and railway lines when service is ready
+        def add_initial_data():
+            """Add stations and railway lines as soon as the service has loaded them."""
+            if not hasattr(add_initial_data, 'data_added'):
+                # Start with major stations for immediate display
+                major_stations = train_service.get_major_stations()
+                if major_stations:
+                    map_view.add_stations_batch(major_stations)
+                    
+                    # Also add railway lines in the background
+                    try:
+                        map_view.draw_railway_lines()
+                        print("Railway lines loaded successfully")
+                    except Exception as e:
+                        print(f"Failed to load railway lines: {e}")
+                    
+                    add_initial_data.data_added = True
+                    
+                    # Center map on selected station after data is loaded
+                    center_map_on_selected_station()
+                    return True
+            return False
+
+        # Try to add data immediately, then in timer if not ready
+        if not add_initial_data():
+            # If data isn't ready, check every 2 seconds until it is
+            def check_data():
+                if add_initial_data():
+                    return False  # Stop the timer
+                return True  # Continue checking
+            
+            ui.timer(2, check_data)
+        else:
+            # If data was added immediately, try to center the map
+            ui.timer(1, lambda: center_map_on_selected_station(), once=True)
+
+        # Initial map update
+        update_map()
+        
+        # Update the map every 15 seconds (reduced frequency for better performance)
+        ui.timer(15, update_map)
+
     @app.on_startup
     async def on_startup():
         """Fetch station index on startup."""
@@ -224,6 +392,13 @@ def create():
             print(f"Successfully loaded {len(station_cache)} stations.")
         else:
             print("Failed to load station index. Search functionality will be unavailable.")
+        
+        train_service.start()
+
+    @app.on_shutdown
+    def on_shutdown():
+        """Stop background services."""
+        train_service.stop()
 
 # --- UI Implementation ---
 # This part is now inside create()
